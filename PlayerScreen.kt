@@ -83,6 +83,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import java.io.File
 import kotlinx.coroutines.delay
 import org.videolan.libvlc.LibVLC
+import org.videolan.libvlc.interfaces.IMedia
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
@@ -147,7 +148,7 @@ fun PlayerScreen(
         time = target
     }
     fun setSpeed(s: Float) { speed = s; player.setRate(s) }
-    fun addSub(f: File) { player.addSlave(Media.Slave.Type.Subtitle, Uri.fromFile(f), true) }
+    fun addSub(f: File) { player.addSlave(IMedia.Slave.Type.Subtitle, Uri.fromFile(f), true) }
 
     val subPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
         if (u != null) runCatching {
