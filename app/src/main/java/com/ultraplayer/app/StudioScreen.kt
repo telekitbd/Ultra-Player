@@ -131,18 +131,39 @@ fun StudioScreen(vm: StudioViewModel, onPlay: (Uri, String, String?) -> Unit) {
                 } else {
                     Text("Downloads the Whisper tiny model (~78 MB) once, then transcribes offline without an API key.")
                 }
+                if (vm.provider == "gemini") {
+                    Text(
+                        "Gemini 3.8 Live streams the audio. Subtitle timing is estimated from the streamed speech.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Picker("Spoken language", SPOKEN, vm.spokenLang) { vm.spokenLang = it }
             }
         }
 
         item {
-            Section("3. Translation (on-device, ML Kit)") {
+            Section("3. Context-aware Bengali translation") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Translate subtitles", modifier = Modifier.weight(1f))
                     Switch(checked = vm.translateEnabled, onCheckedChange = { vm.translateEnabled = it })
                 }
-                if (vm.translateEnabled) Picker("Translate to", targets, vm.targetLang) { vm.targetLang = it }
-                if (vm.cues.isNotEmpty()) {
+                if (vm.translateEnabled) {
+                    Picker("Translate to", targets, vm.targetLang) { vm.targetLang = it }
+                    Text(
+                        "Nearby dialogue is considered so the Bengali translation keeps the video's meaning and tone.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (vm.provider != "gemini") {
+                        OutlinedTextField(
+                            value = vm.translationGeminiKey,
+                            onValueChange = { vm.translationGeminiKey = it },
+                            label = { Text("Gemini API key for translation") },
+                            singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                if (vm.translateEnabled && vm.cues.isNotEmpty()) {
                     OutlinedButton(onClick = { vm.translateCurrent() }, enabled = !vm.busy) {
                         Text("Translate current subtitle")
                     }

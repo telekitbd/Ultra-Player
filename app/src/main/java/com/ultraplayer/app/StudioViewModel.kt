@@ -30,10 +30,11 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
             sp.getString("key", "") else "",
     ) ?: "")
     var geminiKey by mutableStateOf(sp.getString("gemini_key", "") ?: "")
+    var translationGeminiKey by mutableStateOf(sp.getString("translation_gemini_key", "") ?: "")
     var endpoint by mutableStateOf(sp.getString("endpoint", WhisperClient.GROQ_URL) ?: WhisperClient.GROQ_URL)
     var model by mutableStateOf(
         sp.getString("model", null).orEmpty()
-            .takeUnless { it.isBlank() || it == "whisper-1" }
+            .takeUnless { it.isBlank() || it == "whisper-1" || it == "gemini-2.5-flash" }
             ?: if (provider == "gemini") GeminiSpeechClient.MODEL
             else if (provider == "groq") WhisperClient.GROQ_MODEL else ""
     )
@@ -53,7 +54,8 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveSettings() {
         sp.edit().putString("provider", provider).putString("groq_key", groqKey)
-            .putString("gemini_key", geminiKey).putString("key", groqKey)
+            .putString("gemini_key", geminiKey).putString("translation_gemini_key", translationGeminiKey)
+            .putString("key", groqKey)
             .putString("endpoint", endpoint).putString("model", model)
             .putString("spoken", spokenLang).putString("target", targetLang).apply()
     }
@@ -105,6 +107,11 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                 if (provider != "device" &&
                     (if (provider == "gemini") geminiKey else groqKey).isBlank()) {
                     throw IllegalStateException("Selected provider API key dao")
+                }
+                if (translateEnabled && translationKey().isBlank()) {
+                    throw IllegalStateException(
+                        "Natural, context-aware Bengali translation needs a Gemini API key. Add one in Translation settings.",
+                    )
                 }
 
                 val all = ArrayList<Cue>()
@@ -173,11 +180,16 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun doTranslate(src: List<Cue>) {
-        status = "Translating (first time model download hobe)..."
+        status = "Video dialogue bujhe natural Bangla te translate hocche..."
         progress = 0.8f
-        cues = CueTranslator.translate(src, spokenLang, targetLang) { progress = 0.8f + it * 0.2f }
+        cues = GeminiTranslationClient.translate(
+            translationKey(), src, spokenLang, targetLang,
+        ) { progress = 0.8f + it * 0.2f }
         translated = true
     }
+
+    private fun translationKey(): String =
+        if (provider == "gemini") geminiKey.trim() else translationGeminiKey.trim()
 
     private fun baseName(): String {
         val b = videoName.substringBeforeLast('.').ifBlank { "subtitle" }

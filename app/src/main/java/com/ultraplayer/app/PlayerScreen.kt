@@ -37,10 +37,12 @@ import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Replay10
-import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.VolumeDown
+import androidx.compose.material.icons.rounded.VolumeOff
+import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -66,6 +68,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -83,6 +86,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import java.io.File
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
@@ -127,6 +131,7 @@ fun PlayerScreen(
     var showControls by remember { mutableStateOf(true) }
     var locked by remember { mutableStateOf(false) }
     var showPanel by remember { mutableStateOf(false) }
+    var hudIcon by remember { mutableStateOf<ImageVector?>(null) }
     var repeat by remember { mutableStateOf(false) }
     var loopA by remember { mutableLongStateOf(-1L) }
     var loopB by remember { mutableLongStateOf(-1L) }
@@ -135,13 +140,21 @@ fun PlayerScreen(
     var failed by remember { mutableStateOf(false) }
     var dragging by remember { mutableStateOf(false) }
     var dragPos by remember { mutableFloatStateOf(0f) }
-    var sleepAt by remember { mutableLongStateOf(0L) }
     var subDelay by remember { mutableLongStateOf(0L) }
     var audDelay by remember { mutableLongStateOf(0L) }
-    var eqIdx by remember { mutableIntStateOf(-1) }
     var interaction by remember { mutableIntStateOf(0) }
 
-    fun showHud(t: String) { hud = t; hudStamp++ }
+    fun showHud(t: String) { hud = t; hudIcon = null; hudStamp++ }
+    fun showVolumeHud(level: Float, max: Int) {
+        val value = (level / max.coerceAtLeast(1) * 100).roundToInt()
+        hud = "$value%"
+        hudIcon = when {
+            value == 0 -> Icons.Rounded.VolumeOff
+            level < max * 0.5f -> Icons.Rounded.VolumeDown
+            else -> Icons.Rounded.VolumeUp
+        }
+        hudStamp++
+    }
     fun seekBy(d: Long) {
         val target = (player.getTime() + d).coerceIn(0L, if (length > 0) length else Long.MAX_VALUE)
         player.setTime(target)
@@ -164,6 +177,7 @@ fun PlayerScreen(
         val c = WindowCompat.getInsetsController(activity.window, view)
         c.hide(WindowInsetsCompat.Type.systemBars())
         c.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
         onDispose {
             c.show(WindowInsetsCompat.Type.systemBars())
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -245,14 +259,6 @@ fun PlayerScreen(
         }
     }
     LaunchedEffect(hudStamp) { delay(900); hud = null }
-    LaunchedEffect(sleepAt) {
-        if (sleepAt > 0) {
-            delay((sleepAt - System.currentTimeMillis()).coerceAtLeast(0))
-            player.pause()
-            onBack()
-        }
-    }
-
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(factory = { videoLayout }, modifier = Modifier.fillMaxSize())
 
@@ -298,9 +304,11 @@ fun PlayerScreen(
                                 showHud("☀ ${(lp.screenBrightness * 100).toInt()}%")
                             } else {
                                 val max = audioMgr.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                                volAcc = (volAcc - frac * max * 1.5f).coerceIn(0f, max.toFloat())
-                                audioMgr.setStreamVolume(AudioManager.STREAM_MUSIC, volAcc.toInt(), 0)
-                                showHud("🔊 ${(volAcc / max * 100).toInt()}%")
+                                if (max > 0) {
+                                    volAcc = (volAcc - frac * max * 1.5f).coerceIn(0f, max.toFloat())
+                                    audioMgr.setStreamVolume(AudioManager.STREAM_MUSIC, volAcc.roundToInt(), 0)
+                                    showVolumeHud(volAcc, max)
+                                }
                             }
                         }
                     }
@@ -312,7 +320,12 @@ fun PlayerScreen(
             Box(
                 Modifier.align(Alignment.Center).clip(RoundedCornerShape(14.dp))
                     .background(Color(0xAA000000)).padding(horizontal = 18.dp, vertical = 10.dp)
-            ) { Text(it, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold) }
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    hudIcon?.let { Icon(it, null, tint = Color.White) }
+                    Text(it, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
         }
 
         if (failed) {
@@ -407,13 +420,6 @@ fun PlayerScreen(
                         IconButton(onClick = { subPicker.launch(arrayOf("*/*")) }) {
                             Icon(Icons.Rounded.Subtitles, null, tint = Color.White)
                         }
-                        IconButton(onClick = {
-                            val land = activity.resources.configuration.orientation ==
-                                android.content.res.Configuration.ORIENTATION_LANDSCAPE
-                            activity.requestedOrientation =
-                                if (land) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                                else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                        }) { Icon(Icons.Rounded.ScreenRotation, null, tint = Color.White) }
                     }
                 }
             }
@@ -425,8 +431,6 @@ fun PlayerScreen(
         val spuTracks = remember { player.getSpuTracks()?.toList() ?: emptyList() }
         var curAudio by remember { mutableIntStateOf(player.getAudioTrack()) }
         var curSpu by remember { mutableIntStateOf(player.getSpuTrack()) }
-        val eqCount = remember { MediaPlayer.Equalizer.getPresetCount() }
-
         Dialog(onDismissRequest = { showPanel = false }) {
             Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
                 Column(
@@ -477,34 +481,6 @@ fun PlayerScreen(
                     Text("Sync", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
                     DelayRow("Subtitle", subDelay) { subDelay = it; player.setSpuDelay(it * 1000) }
                     DelayRow("Audio", audDelay) { audDelay = it; player.setAudioDelay(it * 1000) }
-
-                    Text("Equalizer", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        item {
-                            FilterChip(selected = eqIdx < 0, onClick = { eqIdx = -1; player.setEqualizer(null) }, label = { Text("Off") })
-                        }
-                        items((0 until eqCount).toList()) { i ->
-                            FilterChip(
-                                selected = eqIdx == i,
-                                onClick = { eqIdx = i; player.setEqualizer(MediaPlayer.Equalizer.createFromPreset(i)) },
-                                label = { Text(MediaPlayer.Equalizer.getPresetName(i)) },
-                            )
-                        }
-                    }
-
-                    Text("Sleep timer", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        item {
-                            FilterChip(selected = sleepAt == 0L, onClick = { sleepAt = 0 }, label = { Text("Off") })
-                        }
-                        items(listOf(15, 30, 60, 90)) { m ->
-                            FilterChip(
-                                selected = false,
-                                onClick = { sleepAt = System.currentTimeMillis() + m * 60_000L; showHud("Sleep in $m min") },
-                                label = { Text("$m min") },
-                            )
-                        }
-                    }
 
                     Button(onClick = { showPanel = false }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                         Text("Done")
