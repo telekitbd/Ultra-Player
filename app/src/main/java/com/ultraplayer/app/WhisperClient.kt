@@ -10,10 +10,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONObject
 
-/** OpenAI-compatible Whisper endpoint client (OpenAI, Groq, self-hosted ...). */
+/** Groq-compatible Whisper endpoint client. */
 object WhisperClient {
-    const val OPENAI_URL = "https://api.openai.com/v1/audio/transcriptions"
-    const val OPENAI_MODEL = "whisper-1"
     const val GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
     const val GROQ_MODEL = "whisper-large-v3-turbo"
 
@@ -32,13 +30,13 @@ object WhisperClient {
 
         val req = Request.Builder()
             .url(endpoint)
-            .header("Authorization", "Bearer " + key.trim())
+            .header("Authorization", "Bearer $key")
             .post(body.build())
             .build()
 
         http.newCall(req).execute().use { r ->
             val s = r.body?.string().orEmpty()
-            if (!r.isSuccessful) throw IOException("API error " + r.code + ": " + s.take(300))
+            if (!r.isSuccessful) throw IOException("API error ${r.code}: ${s.take(300)}")
             val json = JSONObject(s)
             val segs = json.optJSONArray("segments")
             val out = ArrayList<Cue>()

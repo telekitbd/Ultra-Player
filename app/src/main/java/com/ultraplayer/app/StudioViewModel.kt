@@ -22,7 +22,10 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     var videoName by mutableStateOf("")
     var urlText by mutableStateOf("")
 
-    var apiKey by mutableStateOf(sp.getString("key", "") ?: "")
+    var provider by mutableStateOf(sp.getString("provider", "groq") ?: "groq")
+        private set
+    var groqKey by mutableStateOf(sp.getString("groq_key", sp.getString("key", "")) ?: "")
+    var geminiKey by mutableStateOf(sp.getString("gemini_key", "") ?: "")
     var endpoint by mutableStateOf(sp.getString("endpoint", WhisperClient.GROQ_URL) ?: WhisperClient.GROQ_URL)
     var model by mutableStateOf(sp.getString("model", WhisperClient.GROQ_MODEL) ?: WhisperClient.GROQ_MODEL)
     var spokenLang by mutableStateOf(sp.getString("spoken", "auto") ?: "auto")
@@ -40,8 +43,24 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     private var job: Job? = null
 
     fun saveSettings() {
-        sp.edit().putString("key", apiKey).putString("endpoint", endpoint).putString("model", model)
+        sp.edit().putString("provider", provider).putString("groq_key", groqKey)
+            .putString("gemini_key", geminiKey).putString("key", groqKey)
+            .putString("endpoint", endpoint).putString("model", model)
             .putString("spoken", spokenLang).putString("target", targetLang).apply()
+    }
+
+    fun setProvider(value: String) {
+        if (provider == value) return
+        provider = value
+        when (value) {
+            "groq" -> {
+                endpoint = WhisperClient.GROQ_URL
+                model = WhisperClient.GROQ_MODEL
+            }
+            "gemini" -> model = GeminiSpeechClient.MODEL
+            else -> model = ""
+        }
+        saveSettings()
     }
 
     fun setVideo(uri: Uri, name: String) {
@@ -74,17 +93,38 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                 val src = videoUri
                     ?: urlText.trim().takeIf { it.startsWith("http") }?.let { Uri.parse(it) }
                     ?: throw IllegalStateException("Age video select koro ba URL dao")
-                if (apiKey.isBlank()) throw IllegalStateException("API key dao (Groq ba OpenAI)")
+                if (provider != "device" &&
+                    (if (provider == "gemini") geminiKey else groqKey).isBlank()) {
+                    throw IllegalStateException("Selected provider API key dao")
+                }
 
                 val all = ArrayList<Cue>()
+                val localModel = if (provider == "device") {
+                    status = "Offline Whisper model prepare hocche..."
+                    LocalWhisper.modelFile(ctx) { percent ->
+                        withContext(Dispatchers.Main) { status = "Whisper model download: $percent%" }
+                    }
+                } else null
                 withContext(Dispatchers.IO) {
                     status = "Audio extract hocche..."
                     AudioChunker.process(
-                        ctx, src, 600,
+                        ctx, src, if (provider == "gemini") 45 else if (provider == "device") 30 else 600,
                         onProgress = { progress = it * 0.8f },
                     ) { idx, file, offsetMs ->
-                        status = "Speech → text (part ${idx + 1})..."
-                        val part = WhisperClient.transcribe(endpoint.trim(), apiKey.trim(), model.trim(), file, spokenLang)
+                        withContext(Dispatchers.Main) {
+                            status = "Speech → text ($provider, part ${idx + 1})..."
+                        }
+                        val part = when (provider) {
+                            "gemini" -> GeminiSpeechClient.transcribe(
+                                geminiKey, model.ifBlank { GeminiSpeechClient.MODEL }, spokenLang, file, 0L
+                            )
+                            "device" -> LocalWhisper.transcribe(
+                                file, localModel ?: error("Whisper model missing"), spokenLang, 0L
+                            )
+                            else -> WhisperClient.transcribe(
+                                endpoint.trim(), groqKey.trim(), model.ifBlank { WhisperClient.GROQ_MODEL }, file, spokenLang
+                            )
+                        }
                         all += part.map { it.copy(start = it.start + offsetMs, end = it.end + offsetMs) }
                         file.delete()
                     }

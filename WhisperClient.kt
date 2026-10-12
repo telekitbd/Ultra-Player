@@ -10,10 +10,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONObject
 
-/** OpenAI-compatible Whisper endpoint client (OpenAI, Groq, self-hosted ...). */
+/** Groq-compatible Whisper endpoint client. */
 object WhisperClient {
-    const val OPENAI_URL = "https://api.openai.com/v1/audio/transcriptions"
-    const val OPENAI_MODEL = "whisper-1"
     const val GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
     const val GROQ_MODEL = "whisper-large-v3-turbo"
 

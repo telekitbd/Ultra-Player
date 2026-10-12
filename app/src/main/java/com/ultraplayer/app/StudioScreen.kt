@@ -98,28 +98,39 @@ fun StudioScreen(vm: StudioViewModel, onPlay: (Uri, String, String?) -> Unit) {
         }
 
         item {
-            Section("2. Speech recognition (Whisper API)") {
+            Section("2. Speech recognition") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
-                        selected = vm.endpoint == WhisperClient.GROQ_URL,
-                        onClick = { vm.endpoint = WhisperClient.GROQ_URL; vm.model = WhisperClient.GROQ_MODEL },
+                        selected = vm.provider == "groq",
+                        onClick = { vm.setProvider("groq") },
                         label = { Text("Groq") },
                     )
                     FilterChip(
-                        selected = vm.endpoint == WhisperClient.OPENAI_URL,
-                        onClick = { vm.endpoint = WhisperClient.OPENAI_URL; vm.model = WhisperClient.OPENAI_MODEL },
-                        label = { Text("OpenAI") },
+                        selected = vm.provider == "gemini",
+                        onClick = { vm.setProvider("gemini") },
+                        label = { Text("Gemini") },
+                    )
+                    FilterChip(
+                        selected = vm.provider == "device",
+                        onClick = { vm.setProvider("device") },
+                        label = { Text("On-device") },
                     )
                 }
-                OutlinedTextField(
-                    value = vm.apiKey, onValueChange = { vm.apiKey = it }, label = { Text("API key") },
-                    singleLine = true, visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = vm.model, onValueChange = { vm.model = it }, label = { Text("Model") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth(),
-                )
+                if (vm.provider != "device") {
+                    OutlinedTextField(
+                        value = if (vm.provider == "gemini") vm.geminiKey else vm.groqKey,
+                        onValueChange = { if (vm.provider == "gemini") vm.geminiKey = it else vm.groqKey = it },
+                        label = { Text(if (vm.provider == "gemini") "Gemini API key" else "Groq API key") },
+                        singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = vm.model, onValueChange = { vm.model = it }, label = { Text("Model") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    Text("Downloads the Whisper tiny model (~78 MB) once, then transcribes offline without an API key.")
+                }
                 Picker("Spoken language", SPOKEN, vm.spokenLang) { vm.spokenLang = it }
             }
         }
