@@ -9,8 +9,6 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.selects.onAwait
-import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -65,7 +63,6 @@ object GeminiSpeechClient {
 
         val setupComplete = CompletableDeferred<Unit>()
         val turnComplete = CompletableDeferred<Unit>()
-        val socketFailure = CompletableDeferred<Throwable>()
         val samplesSent = AtomicLong(0)
         val transcripts = Collections.synchronizedList(mutableListOf<Pair<String, Long>>())
         val request = Request.Builder()
@@ -117,7 +114,6 @@ object GeminiSpeechClient {
                 )
                 setupComplete.completeExceptionally(error)
                 turnComplete.completeExceptionally(error)
-                socketFailure.complete(error)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
@@ -130,12 +126,7 @@ object GeminiSpeechClient {
         })
 
         try {
-            withTimeout(30_000) {
-                select<Unit> {
-                    setupComplete.onAwait { }
-                    socketFailure.onAwait { throw it }
-                }
-            }
+            withTimeout(30_000) { setupComplete.await() }
             var position = 0
             while (position < pcm.size) {
                 val end = minOf(position + CHUNK_BYTES, pcm.size)
@@ -154,12 +145,7 @@ object GeminiSpeechClient {
             if (!socket.send(JSONObject().put("realtimeInput", JSONObject().put("audioStreamEnd", true)).toString())) {
                 throw IOException("Could not finish Gemini Live audio stream")
             }
-            withTimeout(60_000) {
-                select<Unit> {
-                    turnComplete.onAwait { }
-                    socketFailure.onAwait { throw it }
-                }
-            }
+            withTimeout(60_000) { turnComplete.await() }
         } finally {
             socket.close(1000, "transcription complete")
         }
