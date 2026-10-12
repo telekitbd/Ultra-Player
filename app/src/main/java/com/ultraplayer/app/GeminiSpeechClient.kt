@@ -70,7 +70,7 @@ object GeminiSpeechClient {
         val transcripts = Collections.synchronizedList(mutableListOf<Pair<String, Long>>())
         val request = Request.Builder()
             .url(
-                "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta/" +
+                "https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta/" +
                     "GenerativeService.BidiGenerateContent".toHttpUrl()
                     .newBuilder()
                     .addQueryParameter("key", key.trim())
