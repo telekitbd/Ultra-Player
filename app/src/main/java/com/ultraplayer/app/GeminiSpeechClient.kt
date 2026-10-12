@@ -4,6 +4,8 @@ import android.util.Base64
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -19,7 +21,8 @@ object GeminiSpeechClient {
         .readTimeout(2, TimeUnit.MINUTES)
         .build()
 
-    fun transcribe(key: String, model: String, language: String, file: File, offsetMs: Long): List<Cue> {
+    suspend fun transcribe(key: String, model: String, language: String, file: File, offsetMs: Long): List<Cue> =
+        withContext(Dispatchers.IO) {
         val prompt = "Transcribe the attached audio in its original language. " +
             (if (language == "auto") "Detect the spoken language." else "The language is $language.") +
             " Return only JSON {\"segments\":[{\"start\":0.0,\"end\":1.0,\"text\":\"words\"}]}. " +
@@ -47,7 +50,7 @@ object GeminiSpeechClient {
                 ?: throw IOException("Gemini returned no transcription")
             val segments = JSONObject(text).optJSONArray("segments")
                 ?: throw IOException("Gemini returned malformed subtitle JSON")
-            return buildList {
+            buildList {
                 for (index in 0 until segments.length()) {
                     val segment = segments.getJSONObject(index)
                     val spoken = segment.optString("text").trim()
