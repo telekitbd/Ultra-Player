@@ -1,4 +1,5 @@
 package com.ultraplayer.app
+import org.videolan.libvlc.interfaces.IMedia
 
 import android.app.Activity
 import android.content.Context
@@ -147,7 +148,7 @@ fun PlayerScreen(
         time = target
     }
     fun setSpeed(s: Float) { speed = s; player.setRate(s) }
-    fun addSub(f: File) { player.addSlave(Media.Slave.Type.Subtitle, Uri.fromFile(f), true) }
+    fun addSub(f: File) { player.addSlave(IMedia.Slave.Type.Subtitle, Uri.fromFile(f), true) }
 
     val subPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
         if (u != null) runCatching {
