@@ -31,7 +31,12 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     ) ?: "")
     var geminiKey by mutableStateOf(sp.getString("gemini_key", "") ?: "")
     var endpoint by mutableStateOf(sp.getString("endpoint", WhisperClient.GROQ_URL) ?: WhisperClient.GROQ_URL)
-    var model by mutableStateOf(sp.getString("model", WhisperClient.GROQ_MODEL) ?: WhisperClient.GROQ_MODEL)
+    var model by mutableStateOf(
+        sp.getString("model", null).orEmpty()
+            .takeUnless { it.isBlank() || it == "whisper-1" }
+            ?: if (provider == "gemini") GeminiSpeechClient.MODEL
+            else if (provider == "groq") WhisperClient.GROQ_MODEL else ""
+    )
     var spokenLang by mutableStateOf(sp.getString("spoken", "auto") ?: "auto")
     var targetLang by mutableStateOf(sp.getString("target", "bn") ?: "bn")
     var translateEnabled by mutableStateOf(true)
