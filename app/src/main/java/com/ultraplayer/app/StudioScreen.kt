@@ -102,17 +102,17 @@ fun StudioScreen(vm: StudioViewModel, onPlay: (Uri, String, String?) -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = vm.provider == "groq",
-                        onClick = { vm.setProvider("groq") },
+                        onClick = { vm.selectProvider("groq") },
                         label = { Text("Groq") },
                     )
                     FilterChip(
                         selected = vm.provider == "gemini",
-                        onClick = { vm.setProvider("gemini") },
+                        onClick = { vm.selectProvider("gemini") },
                         label = { Text("Gemini") },
                     )
                     FilterChip(
                         selected = vm.provider == "device",
-                        onClick = { vm.setProvider("device") },
+                        onClick = { vm.selectProvider("device") },
                         label = { Text("On-device") },
                     )
                 }

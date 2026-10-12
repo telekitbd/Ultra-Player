@@ -58,7 +58,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
             .putString("spoken", spokenLang).putString("target", targetLang).apply()
     }
 
-    fun setProvider(value: String) {
+    fun selectProvider(value: String) {
         if (provider == value) return
         provider = value
         when (value) {
