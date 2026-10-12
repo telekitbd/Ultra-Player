@@ -24,7 +24,11 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
 
     var provider by mutableStateOf(sp.getString("provider", "groq") ?: "groq")
         private set
-    var groqKey by mutableStateOf(sp.getString("groq_key", sp.getString("key", "")) ?: "")
+    var groqKey by mutableStateOf(sp.getString(
+        "groq_key",
+        if (sp.getString("endpoint", WhisperClient.GROQ_URL) == WhisperClient.GROQ_URL)
+            sp.getString("key", "") else "",
+    ) ?: "")
     var geminiKey by mutableStateOf(sp.getString("gemini_key", "") ?: "")
     var endpoint by mutableStateOf(sp.getString("endpoint", WhisperClient.GROQ_URL) ?: WhisperClient.GROQ_URL)
     var model by mutableStateOf(sp.getString("model", WhisperClient.GROQ_MODEL) ?: WhisperClient.GROQ_MODEL)
