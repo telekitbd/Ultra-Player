@@ -32,13 +32,13 @@ object WhisperClient {
 
         val req = Request.Builder()
             .url(endpoint)
-            .header("Authorization", "Bearer $key")
+            .header("Authorization", "Bearer " + key.trim())
             .post(body.build())
             .build()
 
         http.newCall(req).execute().use { r ->
             val s = r.body?.string().orEmpty()
-            if (!r.isSuccessful) throw IOException("API error ${r.code}: ${s.take(300)}")
+            if (!r.isSuccessful) throw IOException("API error " + r.code + ": " + s.take(300))
             val json = JSONObject(s)
             val segs = json.optJSONArray("segments")
             val out = ArrayList<Cue>()
