@@ -15,30 +15,40 @@ object CueTranslator {
         onProgress: (Float) -> Unit,
     ): List<Cue> {
         if (cues.isEmpty()) return cues
-        val tgt = TranslateLanguage.fromLanguageTag(target) ?: target
+        val tgt = TranslateLanguage.fromLanguageTag(target)
+            ?: throw IllegalStateException("Selected target language is not supported for on-device translation")
 
-        var src: String? = if (spoken != "auto") TranslateLanguage.fromLanguageTag(spoken) else null
-        if (src == null) {
+        val src = if (spoken != "auto") {
+            TranslateLanguage.fromLanguageTag(spoken)
+                ?: throw IllegalStateException("Selected spoken language is not supported for on-device translation")
+        } else {
             val sample = cues.take(20).joinToString(" ") { it.text }
             val client = LanguageIdentification.getClient()
             try {
-                src = TranslateLanguage.fromLanguageTag(client.identifyLanguage(sample).await())
+                TranslateLanguage.fromLanguageTag(client.identifyLanguage(sample).await())
             } finally {
                 client.close()
             }
-        }
-        if (src == null) throw IllegalStateException("Source language detect kora gelo na, language select koro")
+        } ?: throw IllegalStateException(
+            "Could not detect the spoken language. Select it manually and try again.",
+        )
         if (src == tgt) return cues
 
         val tr = Translation.getClient(
             TranslatorOptions.Builder().setSourceLanguage(src).setTargetLanguage(tgt).build()
         )
         try {
-            // Prothombar language model download hoy (internet lagbe), tarpor offline
-            tr.downloadModelIfNeeded(DownloadConditions.Builder().build()).await()
+            try {
+                tr.downloadModelIfNeeded(DownloadConditions.Builder().build()).await()
+            } catch (error: Exception) {
+                throw IllegalStateException(
+                    "Could not download the on-device translation model. Check your internet connection and try again.",
+                    error,
+                )
+            }
             return cues.mapIndexed { i, c ->
                 onProgress((i + 1f) / cues.size)
-                c.copy(text = tr.translate(c.text).await())
+                if (c.text.isBlank()) c else c.copy(text = tr.translate(c.text).await())
             }
         } finally {
             tr.close()

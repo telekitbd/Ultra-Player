@@ -30,7 +30,6 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
             sp.getString("key", "") else "",
     ) ?: "")
     var geminiKey by mutableStateOf(sp.getString("gemini_key", "") ?: "")
-    var translationGeminiKey by mutableStateOf(sp.getString("translation_gemini_key", "") ?: "")
     var endpoint by mutableStateOf(sp.getString("endpoint", WhisperClient.GROQ_URL) ?: WhisperClient.GROQ_URL)
     var model by mutableStateOf(
         if (provider == "gemini") GeminiSpeechClient.MODEL
@@ -52,7 +51,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveSettings() {
         sp.edit().putString("provider", provider).putString("groq_key", groqKey)
-            .putString("gemini_key", geminiKey).putString("translation_gemini_key", translationGeminiKey)
+            .putString("gemini_key", geminiKey)
             .putString("key", groqKey)
             .putString("endpoint", endpoint).putString("model", model)
             .putString("spoken", spokenLang).putString("target", targetLang).apply()
@@ -106,12 +105,6 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                     (if (provider == "gemini") geminiKey else groqKey).isBlank()) {
                     throw IllegalStateException("Selected provider API key dao")
                 }
-                if (translationKey().isBlank()) {
-                    throw IllegalStateException(
-                        "Subtitle translation is required. Add a Gemini API key before generating subtitles.",
-                    )
-                }
-
                 val all = ArrayList<Cue>()
                 val localModel = if (provider == "device") {
                     status = "Offline Whisper model prepare hocche..."
@@ -190,9 +183,6 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         job = viewModelScope.launch {
             busy = true; errorMsg = null
             try {
-                if (translationKey().isBlank()) {
-                    throw IllegalStateException("A Gemini API key is required to translate subtitles.")
-                }
                 doTranslate(original.ifEmpty { cues })
                 status = "Translated: ${cues.size} lines"
             } catch (e: CancellationException) {
@@ -204,16 +194,14 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun doTranslate(src: List<Cue>) {
-        status = "Video dialogue bujhe natural Bangla te translate hocche..."
+        status = "Preparing free on-device translation..."
         progress = 0.8f
-        cues = GeminiTranslationClient.translate(
-            translationKey(), src, spokenLang, targetLang,
-        ) { progress = 0.8f + it * 0.2f }
+        cues = CueTranslator.translate(src, spokenLang, targetLang) {
+            progress = 0.8f + it * 0.2f
+            status = "On-device translation: ${(it * 100).toInt()}%"
+        }
         translated = true
     }
-
-    private fun translationKey(): String =
-        if (provider == "gemini") geminiKey.trim() else translationGeminiKey.trim()
 
     private fun baseName(): String {
         val b = videoName.substringBeforeLast('.').ifBlank { "subtitle" }

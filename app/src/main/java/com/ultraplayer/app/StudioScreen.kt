@@ -157,23 +157,14 @@ fun StudioScreen(vm: StudioViewModel, onPlay: (Uri, String, String?) -> Unit) {
         }
 
         item {
-            Section("3. Context-aware Bengali translation") {
-                Text("Required for generated subtitles")
+            Section("3. Free on-device translation") {
                 Picker("Translate to", targets, vm.targetLang) { vm.targetLang = it }
                 Text(
-                    "Nearby dialogue is considered so the Bengali translation keeps the video's meaning and tone. " +
-                        "A Gemini API key is required; Gemini transcription reuses its key.",
+                    "Uses Google ML Kit on this device. No translation API key or charge is needed. " +
+                        "The language model downloads the first time and then works offline. " +
+                        "For best results, choose the spoken language instead of Auto detect.",
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (vm.provider != "gemini") {
-                    OutlinedTextField(
-                        value = vm.translationGeminiKey,
-                        onValueChange = { vm.translationGeminiKey = it },
-                        label = { Text("Gemini API key for required translation") },
-                        singleLine = true, visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
                 if (vm.cues.isNotEmpty()) {
                     OutlinedButton(onClick = { vm.translateCurrent() }, enabled = !vm.busy) {
                         Text("Translate current subtitle")
