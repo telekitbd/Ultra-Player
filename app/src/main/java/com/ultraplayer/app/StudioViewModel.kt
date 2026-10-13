@@ -129,7 +129,32 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                             status = "Speech → text ($provider, part ${idx + 1})..."
                         }
                         val part = when (provider) {
-                            "gemini" -> GeminiSpeechClient.transcribe(geminiKey, model, spokenLang, file, 0L)
+                            "gemini" -> try {
+                                GeminiSpeechClient.transcribe(geminiKey, model, spokenLang, file, 0L)
+                                    .ifEmpty { throw IllegalStateException("Gemini returned no transcription output") }
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                val fallbackKey = groqKey.trim()
+                                if (fallbackKey.isBlank()) throw error
+                                withContext(Dispatchers.Main) {
+                                    status = "Gemini transcription failed; trying Groq Whisper..."
+                                }
+                                try {
+                                    WhisperClient.transcribe(
+                                        WhisperClient.GROQ_URL,
+                                        fallbackKey,
+                                        WhisperClient.GROQ_MODEL,
+                                        file,
+                                        spokenLang,
+                                    )
+                                } catch (fallbackError: Exception) {
+                                    throw IllegalStateException(
+                                        "Gemini failed: ${error.message}; Groq fallback failed: ${fallbackError.message}",
+                                        fallbackError,
+                                    )
+                                }
+                            }
                             "device" -> LocalWhisper.transcribe(
                                 file, localModel ?: error("Whisper model missing"), spokenLang, 0L
                             )

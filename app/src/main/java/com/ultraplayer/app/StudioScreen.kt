@@ -123,6 +123,20 @@ fun StudioScreen(vm: StudioViewModel, onPlay: (Uri, String, String?) -> Unit) {
                         singleLine = true, visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    if (vm.provider == "gemini") {
+                        OutlinedTextField(
+                            value = vm.groqKey,
+                            onValueChange = { vm.groqKey = it },
+                            label = { Text("Optional Groq Whisper fallback API key") },
+                            singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "If Gemini returns an error or no transcription, Groq Whisper is tried automatically. " +
+                                "Groq free-tier usage limits apply.",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (vm.provider == "groq") {
                         OutlinedTextField(
                             value = vm.model, onValueChange = { vm.model = it }, label = { Text("Model") },
