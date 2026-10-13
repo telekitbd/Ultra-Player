@@ -112,7 +112,7 @@ fun PlayerScreen(
     val audioMgr = remember { ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
     val libVlc = remember {
-        LibVLC(ctx, arrayListOf("--network-caching=2000", "--no-drop-late-frames", "--no-skip-frames"))
+        LibVLC(ctx, arrayListOf("--network-caching=2000"))
     }
     val player = remember { MediaPlayer(libVlc) }
     val videoLayout = remember { VLCVideoLayout(ctx).apply { keepScreenOn = true } }
