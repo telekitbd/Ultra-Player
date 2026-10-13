@@ -22,7 +22,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -31,6 +35,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AspectRatio
+import androidx.compose.material.icons.rounded.Brightness6
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
@@ -74,6 +79,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -132,6 +138,8 @@ fun PlayerScreen(
     var locked by remember { mutableStateOf(false) }
     var showPanel by remember { mutableStateOf(false) }
     var hudIcon by remember { mutableStateOf<ImageVector?>(null) }
+    var hudLabel by remember { mutableStateOf<String?>(null) }
+    var hudProgress by remember { mutableFloatStateOf(0f) }
     var repeat by remember { mutableStateOf(false) }
     var loopA by remember { mutableLongStateOf(-1L) }
     var loopB by remember { mutableLongStateOf(-1L) }
@@ -144,16 +152,28 @@ fun PlayerScreen(
     var audDelay by remember { mutableLongStateOf(0L) }
     var interaction by remember { mutableIntStateOf(0) }
 
-    fun showHud(t: String) { hud = t; hudIcon = null; hudStamp++ }
+    fun showHud(t: String) {
+        hud = t
+        hudIcon = null
+        hudLabel = null
+        hudStamp++
+    }
+    fun showLevelHud(label: String, icon: ImageVector, value: Float) {
+        hud = "${(value.coerceIn(0f, 1f) * 100).roundToInt()}%"
+        hudIcon = icon
+        hudLabel = label
+        hudProgress = value.coerceIn(0f, 1f)
+        hudStamp++
+    }
     fun showVolumeHud(level: Float, max: Int) {
-        val value = (level / max.coerceAtLeast(1) * 100).roundToInt()
-        hud = "$value%"
-        hudIcon = when {
-            value == 0 -> Icons.Rounded.VolumeOff
-            level < max * 0.5f -> Icons.Rounded.VolumeDown
+        val safeMax = max.coerceAtLeast(1)
+        val safeLevel = level.coerceIn(0f, safeMax.toFloat())
+        val icon = when {
+            safeLevel == 0f -> Icons.Rounded.VolumeOff
+            safeLevel < safeMax * 0.5f -> Icons.Rounded.VolumeDown
             else -> Icons.Rounded.VolumeUp
         }
-        hudStamp++
+        showLevelHud("Volume", icon, safeLevel / safeMax)
     }
     fun seekBy(d: Long) {
         val target = (player.getTime() + d).coerceIn(0L, if (length > 0) length else Long.MAX_VALUE)
@@ -301,12 +321,13 @@ fun PlayerScreen(
                                 val cur = if (lp.screenBrightness < 0) 0.5f else lp.screenBrightness
                                 lp.screenBrightness = (cur - frac * 1.5f).coerceIn(0.01f, 1f)
                                 activity.window.attributes = lp
-                                showHud("☀ ${(lp.screenBrightness * 100).toInt()}%")
+                                showLevelHud("Brightness", Icons.Rounded.Brightness6, lp.screenBrightness)
                             } else {
                                 val max = audioMgr.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                                 if (max > 0) {
                                     volAcc = (volAcc - frac * max * 1.5f).coerceIn(0f, max.toFloat())
                                     audioMgr.setStreamVolume(AudioManager.STREAM_MUSIC, volAcc.roundToInt(), 0)
+                                    volAcc = audioMgr.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
                                     showVolumeHud(volAcc, max)
                                 }
                             }
@@ -317,13 +338,41 @@ fun PlayerScreen(
 
         // HUD
         hud?.let {
-            Box(
-                Modifier.align(Alignment.Center).clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xAA000000)).padding(horizontal = 18.dp, vertical = 10.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    hudIcon?.let { Icon(it, null, tint = Color.White) }
-                    Text(it, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+            if (hudLabel != null && hudIcon != null) {
+                Column(
+                    Modifier.align(Alignment.Center).width(208.dp).clip(RoundedCornerShape(18.dp))
+                        .background(Color(0xE61B1B1F)).padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Icon(hudIcon!!, null, tint = Color.White, modifier = Modifier.size(32.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                hudLabel!!, color = Color.White.copy(alpha = 0.72f), fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(it, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    Box(
+                        Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
+                            .background(Color.White.copy(alpha = 0.22f))
+                    ) {
+                        Box(
+                            Modifier.fillMaxWidth(hudProgress).fillMaxSize()
+                                .clip(RoundedCornerShape(3.dp)).background(Color.White)
+                        )
+                    }
+                }
+            } else {
+                Box(
+                    Modifier.align(Alignment.Center).widthIn(max = 280.dp).clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xDD1B1B1F)).padding(horizontal = 18.dp, vertical = 12.dp)
+                ) {
+                    Text(
+                        it, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
