@@ -65,14 +65,11 @@ object GeminiSpeechClient {
         val turnComplete = CompletableDeferred<Unit>()
         val samplesSent = AtomicLong(0)
         val transcripts = Collections.synchronizedList(mutableListOf<Pair<String, Long>>())
+        val liveApiUrl =
+            "https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta/" +
+                "GenerativeService.BidiGenerateContent"
         val request = Request.Builder()
-            .url(
-                "https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta/" +
-                    "GenerativeService.BidiGenerateContent".toHttpUrl()
-                    .newBuilder()
-                    .addQueryParameter("key", key.trim())
-                    .build(),
-            )
+            .url(liveApiUrl.toHttpUrl().newBuilder().addQueryParameter("key", key.trim()).build())
             .build()
 
         val socket = http.newWebSocket(request, object : WebSocketListener() {
