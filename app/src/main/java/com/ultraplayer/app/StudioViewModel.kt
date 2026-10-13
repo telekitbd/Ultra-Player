@@ -10,34 +10,19 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import java.io.File
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class StudioViewModel(app: Application) : AndroidViewModel(app) {
     private val sp = app.getSharedPreferences("studio", 0)
 
     var videoUri by mutableStateOf<Uri?>(null)
     var videoName by mutableStateOf("")
+    var subtitleName by mutableStateOf("")
     var urlText by mutableStateOf("")
-
-    var provider by mutableStateOf(sp.getString("provider", "groq") ?: "groq")
-        private set
-    var groqKey by mutableStateOf(sp.getString(
-        "groq_key",
-        if (sp.getString("endpoint", WhisperClient.GROQ_URL) == WhisperClient.GROQ_URL)
-            sp.getString("key", "") else "",
-    ) ?: "")
-    var geminiKey by mutableStateOf(sp.getString("gemini_key", "") ?: "")
-    var endpoint by mutableStateOf(sp.getString("endpoint", WhisperClient.GROQ_URL) ?: WhisperClient.GROQ_URL)
-    var model by mutableStateOf(
-        if (provider == "gemini") GeminiSpeechClient.MODEL
-        else sp.getString("model", null).orEmpty()
-            .takeUnless { it.isBlank() || it == "whisper-1" || it == "gemini-2.5-flash" || it == "gemini-3.8-live" }
-            ?: if (provider == "groq") WhisperClient.GROQ_MODEL else ""
+    var sourceLang by mutableStateOf(
+        sp.getString("source", sp.getString("spoken", "auto")) ?: "auto",
     )
-    var spokenLang by mutableStateOf(sp.getString("spoken", "auto") ?: "auto")
     var targetLang by mutableStateOf(sp.getString("target", "bn") ?: "bn")
     var busy by mutableStateOf(false)
     var status by mutableStateOf("")
@@ -49,26 +34,22 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
 
     private var job: Job? = null
 
-    fun saveSettings() {
-        sp.edit().putString("provider", provider).putString("groq_key", groqKey)
-            .putString("gemini_key", geminiKey)
-            .putString("key", groqKey)
-            .putString("endpoint", endpoint).putString("model", model)
-            .putString("spoken", spokenLang).putString("target", targetLang).apply()
+    init {
+        saveSettings()
     }
 
-    fun selectProvider(value: String) {
-        if (provider == value) return
-        provider = value
-        when (value) {
-            "groq" -> {
-                endpoint = WhisperClient.GROQ_URL
-                model = WhisperClient.GROQ_MODEL
-            }
-            "gemini" -> model = GeminiSpeechClient.MODEL
-            else -> model = ""
-        }
-        saveSettings()
+    fun saveSettings() {
+        sp.edit()
+            .remove("provider")
+            .remove("groq_key")
+            .remove("gemini_key")
+            .remove("key")
+            .remove("endpoint")
+            .remove("model")
+            .remove("spoken")
+            .putString("source", sourceLang)
+            .putString("target", targetLang)
+            .apply()
     }
 
     fun setVideo(uri: Uri, name: String) {
@@ -79,93 +60,46 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
 
     fun importSubtitle(uri: Uri, name: String) {
         runCatching {
-            val text = getApplication<Application>().contentResolver.openInputStream(uri)!!
-                .bufferedReader().use { it.readText() }
+            val text = getApplication<Application>().contentResolver.openInputStream(uri)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                ?: throw IllegalStateException("Subtitle file could not be opened")
             val list = Subs.parse(text)
-            if (list.isEmpty()) throw IllegalStateException("Subtitle parse kora gelo na")
-            original = list; cues = list; translated = false
-            if (videoName.isBlank()) videoName = name
-            status = "${list.size} lines loaded"
+            if (list.isEmpty()) throw IllegalStateException("No readable SRT/VTT subtitle cues found")
+            original = list
+            cues = list
+            translated = false
+            subtitleName = name
+            status = "${list.size} subtitle lines loaded"
             errorMsg = null
-        }.onFailure { errorMsg = it.message }
+        }.onFailure {
+            errorMsg = it.message ?: it.toString()
+        }
     }
 
-    fun cancel() { job?.cancel() }
+    fun cancel() {
+        job?.cancel()
+    }
 
-    fun generate() {
+    fun translateSubtitle() {
+        if (original.isEmpty()) {
+            errorMsg = "Open an SRT or VTT subtitle file first"
+            return
+        }
         saveSettings()
         job = viewModelScope.launch {
-            busy = true; errorMsg = null; cues = emptyList(); translated = false; progress = 0f
-            val ctx = getApplication<Application>()
+            busy = true
+            errorMsg = null
+            progress = 0f
             try {
-                val src = videoUri
-                    ?: urlText.trim().takeIf { it.startsWith("http") }?.let { Uri.parse(it) }
-                    ?: throw IllegalStateException("Age video select koro ba URL dao")
-                if (provider != "device" &&
-                    (if (provider == "gemini") geminiKey else groqKey).isBlank()) {
-                    throw IllegalStateException("Selected provider API key dao")
+                status = "Preparing on-device translation..."
+                cues = CueTranslator.translate(original, sourceLang, targetLang) {
+                    progress = it
+                    status = "Translating subtitle: ${(it * 100).toInt()}%"
                 }
-                val all = ArrayList<Cue>()
-                val localModel = if (provider == "device") {
-                    status = "Offline Whisper model prepare hocche..."
-                    LocalWhisper.modelFile(ctx) { percent ->
-                        withContext(Dispatchers.Main) { status = "Whisper model download: $percent%" }
-                    }
-                } else null
-                withContext(Dispatchers.IO) {
-                    status = "Audio extract hocche..."
-                    AudioChunker.process(
-                        ctx, src, if (provider == "gemini") 45 else if (provider == "device") 30 else 600,
-                        onProgress = { progress = it * 0.8f },
-                    ) { idx, file, offsetMs ->
-                        withContext(Dispatchers.Main) {
-                            status = "Speech → text ($provider, part ${idx + 1})..."
-                        }
-                        val part = when (provider) {
-                            "gemini" -> try {
-                                GeminiSpeechClient.transcribe(geminiKey, model, spokenLang, file, 0L)
-                                    .ifEmpty { throw IllegalStateException("Gemini returned no transcription output") }
-                            } catch (error: CancellationException) {
-                                throw error
-                            } catch (error: Exception) {
-                                val fallbackKey = groqKey.trim()
-                                if (fallbackKey.isBlank()) throw error
-                                withContext(Dispatchers.Main) {
-                                    status = "Gemini transcription failed; trying Groq Whisper..."
-                                }
-                                try {
-                                    WhisperClient.transcribe(
-                                        WhisperClient.GROQ_URL,
-                                        fallbackKey,
-                                        WhisperClient.GROQ_MODEL,
-                                        file,
-                                        spokenLang,
-                                    )
-                                } catch (fallbackError: Exception) {
-                                    throw IllegalStateException(
-                                        "Gemini failed: ${error.message}; Groq fallback failed: ${fallbackError.message}",
-                                        fallbackError,
-                                    )
-                                }
-                            }
-                            "device" -> LocalWhisper.transcribe(
-                                file, localModel ?: error("Whisper model missing"), spokenLang, 0L
-                            )
-                            else -> WhisperClient.transcribe(
-                                endpoint.trim(), groqKey.trim(), model.ifBlank { WhisperClient.GROQ_MODEL }, file, spokenLang
-                            )
-                        }
-                        all += part.map { it.copy(start = it.start + offsetMs, end = it.end + offsetMs) }
-                        file.delete()
-                    }
-                }
-                original = all
-                cues = all
-                if (all.isEmpty()) throw IllegalStateException("Kono speech paoya jay nai")
-
-                doTranslate(all)
+                translated = true
                 progress = 1f
-                status = "Done: ${cues.size} lines"
+                status = "Translated: ${cues.size} subtitle lines"
             } catch (e: CancellationException) {
                 status = "Cancelled"
                 throw e
@@ -173,38 +107,12 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                 errorMsg = e.message ?: e.toString()
             } finally {
                 busy = false
-                ctx.cacheDir.listFiles { f -> f.name.startsWith("chunk_") }?.forEach { it.delete() }
             }
         }
     }
 
-    fun translateCurrent() {
-        saveSettings()
-        job = viewModelScope.launch {
-            busy = true; errorMsg = null
-            try {
-                doTranslate(original.ifEmpty { cues })
-                status = "Translated: ${cues.size} lines"
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                errorMsg = e.message ?: e.toString()
-            } finally { busy = false }
-        }
-    }
-
-    private suspend fun doTranslate(src: List<Cue>) {
-        status = "Preparing free on-device translation..."
-        progress = 0.8f
-        cues = CueTranslator.translate(src, spokenLang, targetLang) {
-            progress = 0.8f + it * 0.2f
-            status = "On-device translation: ${(it * 100).toInt()}%"
-        }
-        translated = true
-    }
-
     private fun baseName(): String {
-        val b = videoName.substringBeforeLast('.').ifBlank { "subtitle" }
+        val b = videoName.ifBlank { subtitleName }.substringBeforeLast('.').ifBlank { "subtitle" }
         return if (translated) "$b.$targetLang" else b
     }
 

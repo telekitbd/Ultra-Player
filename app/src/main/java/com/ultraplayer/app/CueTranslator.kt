@@ -10,7 +10,7 @@ import kotlinx.coroutines.tasks.await
 object CueTranslator {
     suspend fun translate(
         cues: List<Cue>,
-        spoken: String,
+        sourceLanguage: String,
         target: String,
         onProgress: (Float) -> Unit,
     ): List<Cue> {
@@ -18,9 +18,9 @@ object CueTranslator {
         val tgt = TranslateLanguage.fromLanguageTag(target)
             ?: throw IllegalStateException("Selected target language is not supported for on-device translation")
 
-        val src = if (spoken != "auto") {
-            TranslateLanguage.fromLanguageTag(spoken)
-                ?: throw IllegalStateException("Selected spoken language is not supported for on-device translation")
+        val src = if (sourceLanguage != "auto") {
+            TranslateLanguage.fromLanguageTag(sourceLanguage)
+                ?: throw IllegalStateException("Selected subtitle language is not supported for on-device translation")
         } else {
             val sample = cues.take(20).joinToString(" ") { it.text }
             val client = LanguageIdentification.getClient()

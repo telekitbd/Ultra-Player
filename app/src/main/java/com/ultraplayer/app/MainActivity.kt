@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
                         NavigationBarItem(
                             selected = tab == 1, onClick = { tab = 1 },
                             icon = { Icon(Icons.Rounded.Subtitles, null) },
-                            label = { Text("Subtitle Studio") },
+                            label = { Text("Subtitle Translator") },
                         )
                     }
                 },

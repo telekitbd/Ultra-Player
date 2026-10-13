@@ -20,7 +20,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -35,13 +34,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.mlkit.nl.translate.TranslateLanguage
 import java.util.Locale
 
-private val SPOKEN = listOf(
+private val SOURCE_LANGUAGES = listOf(
     "auto" to "Auto detect", "en" to "English", "bn" to "Bengali", "hi" to "Hindi", "ur" to "Urdu",
     "ar" to "Arabic", "es" to "Spanish", "fr" to "French", "de" to "German", "ja" to "Japanese",
     "ko" to "Korean", "zh" to "Chinese", "ru" to "Russian", "tr" to "Turkish", "id" to "Indonesian",
@@ -59,11 +57,11 @@ fun StudioScreen(vm: StudioViewModel, onPlay: (Uri, String, String?) -> Unit) {
             .sortedBy { it.second }
     }
 
-    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
-        if (u != null) vm.setVideo(u, displayName(ctx, u))
+    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.setVideo(uri, displayName(ctx, uri))
     }
-    val subPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
-        if (u != null) vm.importSubtitle(u, displayName(ctx, u))
+    val subtitlePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importSubtitle(uri, displayName(ctx, uri))
     }
 
     LazyColumn(
@@ -72,120 +70,85 @@ fun StudioScreen(vm: StudioViewModel, onPlay: (Uri, String, String?) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text("Subtitle Studio", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Text("Subtitle Translator", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             Text(
-                "Video → speech-to-text → translate → SRT / VTT / ASS export",
+                "Open an SRT/VTT subtitle, translate it on-device, then export or play it with a video.",
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
         item {
-            Section("1. Source") {
+            Section("1. Open subtitle") {
                 Text(
-                    vm.videoName.ifBlank { "Kono video select kora nai" },
+                    vm.subtitleName.ifBlank { "No subtitle file selected" },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(
+                    onClick = { subtitlePicker.launch(arrayOf("application/x-subrip", "text/vtt", "text/*", "*/*")) },
+                ) {
+                    Text("Open SRT / VTT subtitle")
+                }
+                Text(
+                    "Translation uses subtitle text; videos without a subtitle file cannot be translated here.",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        item {
+            Section("2. Translation") {
+                Picker("Subtitle language", SOURCE_LANGUAGES, vm.sourceLang) { vm.sourceLang = it }
+                Picker("Translate to", targets, vm.targetLang) { vm.targetLang = it }
+                Text(
+                    "Google ML Kit translates on this device. No API key or charge is needed; " +
+                        "the language model downloads once and then works offline.",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (vm.original.isNotEmpty()) {
+                    Button(
+                        onClick = { vm.translateSubtitle() },
+                        enabled = !vm.busy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Translate subtitle")
+                    }
+                }
+            }
+        }
+
+        item {
+            Section("3. Video (optional)") {
+                Text(
+                    vm.videoName.ifBlank { "No video selected" },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { videoPicker.launch(arrayOf("video/*", "audio/*")) }) { Text("Pick video") }
-                    OutlinedButton(onClick = { subPicker.launch(arrayOf("*/*")) }) { Text("Open .srt/.vtt") }
+                    OutlinedButton(onClick = { videoPicker.launch(arrayOf("video/*")) }) {
+                        Text("Pick video")
+                    }
                 }
                 OutlinedTextField(
-                    value = vm.urlText, onValueChange = { vm.urlText = it; if (it.isNotBlank()) vm.videoUri = null },
-                    label = { Text("Or online video URL") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    value = vm.urlText,
+                    onValueChange = { vm.urlText = it; if (it.isNotBlank()) vm.videoUri = null },
+                    label = { Text("Or video URL for playback") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
 
         item {
-            Section("2. Speech recognition") {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = vm.provider == "groq",
-                        onClick = { vm.selectProvider("groq") },
-                        label = { Text("Groq") },
-                    )
-                    FilterChip(
-                        selected = vm.provider == "gemini",
-                        onClick = { vm.selectProvider("gemini") },
-                        label = { Text("Gemini") },
-                    )
-                    FilterChip(
-                        selected = vm.provider == "device",
-                        onClick = { vm.selectProvider("device") },
-                        label = { Text("On-device") },
-                    )
-                }
-                if (vm.provider != "device") {
-                    OutlinedTextField(
-                        value = if (vm.provider == "gemini") vm.geminiKey else vm.groqKey,
-                        onValueChange = { if (vm.provider == "gemini") vm.geminiKey = it else vm.groqKey = it },
-                        label = { Text(if (vm.provider == "gemini") "Gemini API key" else "Groq API key") },
-                        singleLine = true, visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    if (vm.provider == "gemini") {
-                        OutlinedTextField(
-                            value = vm.groqKey,
-                            onValueChange = { vm.groqKey = it },
-                            label = { Text("Optional Groq Whisper fallback API key") },
-                            singleLine = true, visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(
-                            "If Gemini returns an error or no transcription, Groq Whisper is tried automatically. " +
-                                "Groq free-tier usage limits apply.",
-                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (vm.provider == "groq") {
-                        OutlinedTextField(
-                            value = vm.model, onValueChange = { vm.model = it }, label = { Text("Model") },
-                            singleLine = true, modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                } else {
-                    Text("Downloads the Whisper tiny model (~78 MB) once, then transcribes offline without an API key.")
-                }
-                if (vm.provider == "gemini") {
-                    Text(
-                        "Gemini 3.8 Flash transcribes uploaded audio chunks and returns timestamped subtitle segments.",
-                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Picker("Spoken language", SPOKEN, vm.spokenLang) { vm.spokenLang = it }
-            }
-        }
-
-        item {
-            Section("3. Free on-device translation") {
-                Picker("Translate to", targets, vm.targetLang) { vm.targetLang = it }
-                Text(
-                    "Uses Google ML Kit on this device. No translation API key or charge is needed. " +
-                        "The language model downloads the first time and then works offline. " +
-                        "For best results, choose the spoken language instead of Auto detect.",
-                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (vm.cues.isNotEmpty()) {
-                    OutlinedButton(onClick = { vm.translateCurrent() }, enabled = !vm.busy) {
-                        Text("Translate current subtitle")
-                    }
-                }
-            }
-        }
-
-        item {
-            Section("4. Generate") {
+            Section("4. Translation status") {
                 if (vm.busy) {
                     LinearProgressIndicator(progress = { vm.progress }, modifier = Modifier.fillMaxWidth())
                     Text(vm.status, fontSize = 13.sp)
                     OutlinedButton(onClick = { vm.cancel() }) { Text("Cancel") }
-                } else {
-                    Button(onClick = { vm.generate() }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Generate subtitles")
-                    }
-                    if (vm.status.isNotBlank()) Text(vm.status, fontSize = 13.sp, color = MaterialTheme.colorScheme.secondary)
+                } else if (vm.status.isNotBlank()) {
+                    Text(vm.status, fontSize = 13.sp, color = MaterialTheme.colorScheme.secondary)
                 }
-                vm.errorMsg?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
+                vm.errorMsg?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                }
             }
         }
 
@@ -193,29 +156,38 @@ fun StudioScreen(vm: StudioViewModel, onPlay: (Uri, String, String?) -> Unit) {
             item {
                 Section("5. Export (${vm.cues.size} lines)") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("srt", "vtt", "ass", "txt").forEach { f ->
+                        listOf("srt", "vtt", "ass", "txt").forEach { format ->
                             OutlinedButton(
-                                onClick = { runCatching { vm.export(f) }.onSuccess { toast(it) }.onFailure { toast(it.message ?: "Error") } },
+                                onClick = {
+                                    runCatching { vm.export(format) }
+                                        .onSuccess { toast(it) }
+                                        .onFailure { toast(it.message ?: "Error") }
+                                },
                                 contentPadding = PaddingValues(horizontal = 12.dp),
-                            ) { Text(f.uppercase()) }
+                            ) {
+                                Text(format.uppercase())
+                            }
                         }
                     }
-                    val playUri = vm.videoUri ?: vm.urlText.trim().takeIf { it.startsWith("http") }?.let { Uri.parse(it) }
+                    val playUri = vm.videoUri
+                        ?: vm.urlText.trim().takeIf { it.startsWith("http") }?.let { Uri.parse(it) }
                     if (playUri != null) {
                         Button(
                             onClick = { onPlay(playUri, vm.videoName.ifBlank { "Video" }, vm.cacheSrt()) },
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Play with this subtitle") }
+                        ) {
+                            Text("Play with this subtitle")
+                        }
                     }
                 }
             }
-            items(vm.cues.take(300)) { c ->
+            items(vm.cues.take(300)) { cue ->
                 Column {
                     Text(
-                        "${fmtTime(c.start)} → ${fmtTime(c.end)}",
+                        "${fmtTime(cue.start)} → ${fmtTime(cue.end)}",
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.primary,
                     )
-                    Text(c.text, fontSize = 14.sp)
+                    Text(cue.text, fontSize = 14.sp)
                 }
             }
         }
