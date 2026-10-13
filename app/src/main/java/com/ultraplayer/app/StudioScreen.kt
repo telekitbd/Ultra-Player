@@ -25,7 +25,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -124,16 +123,18 @@ fun StudioScreen(vm: StudioViewModel, onPlay: (Uri, String, String?) -> Unit) {
                         singleLine = true, visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
-                        value = vm.model, onValueChange = { vm.model = it }, label = { Text("Model") },
-                        singleLine = true, modifier = Modifier.fillMaxWidth(),
-                    )
+                    if (vm.provider == "groq") {
+                        OutlinedTextField(
+                            value = vm.model, onValueChange = { vm.model = it }, label = { Text("Model") },
+                            singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 } else {
                     Text("Downloads the Whisper tiny model (~78 MB) once, then transcribes offline without an API key.")
                 }
                 if (vm.provider == "gemini") {
                     Text(
-                        "Gemini 3.8 Live streams the audio. Subtitle timing is estimated from the streamed speech.",
+                        "Gemini 3.8 Flash transcribes uploaded audio chunks and returns timestamped subtitle segments.",
                         fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -143,27 +144,23 @@ fun StudioScreen(vm: StudioViewModel, onPlay: (Uri, String, String?) -> Unit) {
 
         item {
             Section("3. Context-aware Bengali translation") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Translate subtitles", modifier = Modifier.weight(1f))
-                    Switch(checked = vm.translateEnabled, onCheckedChange = { vm.translateEnabled = it })
-                }
-                if (vm.translateEnabled) {
-                    Picker("Translate to", targets, vm.targetLang) { vm.targetLang = it }
-                    Text(
-                        "Nearby dialogue is considered so the Bengali translation keeps the video's meaning and tone.",
-                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Text("Required for generated subtitles")
+                Picker("Translate to", targets, vm.targetLang) { vm.targetLang = it }
+                Text(
+                    "Nearby dialogue is considered so the Bengali translation keeps the video's meaning and tone. " +
+                        "A Gemini API key is required; Gemini transcription reuses its key.",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (vm.provider != "gemini") {
+                    OutlinedTextField(
+                        value = vm.translationGeminiKey,
+                        onValueChange = { vm.translationGeminiKey = it },
+                        label = { Text("Gemini API key for required translation") },
+                        singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                    if (vm.provider != "gemini") {
-                        OutlinedTextField(
-                            value = vm.translationGeminiKey,
-                            onValueChange = { vm.translationGeminiKey = it },
-                            label = { Text("Gemini API key for translation") },
-                            singleLine = true, visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
                 }
-                if (vm.translateEnabled && vm.cues.isNotEmpty()) {
+                if (vm.cues.isNotEmpty()) {
                     OutlinedButton(onClick = { vm.translateCurrent() }, enabled = !vm.busy) {
                         Text("Translate current subtitle")
                     }

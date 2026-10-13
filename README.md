@@ -8,8 +8,8 @@ Android Gallery + Video Player (Kotlin, Jetpack Compose, libVLC).
 - Player: swipe brightness/volume, double-tap seek, long-press 2x, lock, aspect ratio, 0.25x–4x speed,
   sensor auto-rotation, audio/subtitle track select, external subtitle, subtitle/audio delay, A-B loop, repeat,
   resume position, network stream (URL), "Open with" support for other apps
-- **Subtitle Studio**: video/URL → audio extract (any codec) → Groq, Gemini 3.8 Live streaming transcription,
-  or on-device Whisper → context-aware Gemini translation into natural Bengali → export SRT / VTT / ASS / TXT
+- **Subtitle Studio**: video/URL → audio extract (any codec) → Groq, timestamped Gemini 3.8 Flash audio transcription,
+  or on-device Whisper → required, context-aware Gemini translation into natural Bengali → export SRT / VTT / ASS / TXT
   → play with subtitle
 
 ## GitHub diye build
@@ -23,8 +23,7 @@ gradle assembleRelease   # Android Studio / JDK 17 + Android SDK 34
 ```
 
 ## Subtitle Studio setup
-- Groq ba Gemini API key provider select korar por dao.
-- Groq ba on-device transcription-er shathe context-aware translation chalate Translation settings-e Gemini API key dao.
-- Gemini Live transcription streams audio in real time; its subtitle segment timing is estimated.
+- Groq ba Gemini API key provider select korar por dao. Gemini transcription-e WAV audio chunk upload kore timestamped subtitle segment generate hoy.
+- Translation is required for generated subtitles. Groq ba on-device transcription-er shathe Translation settings-e Gemini API key dao; Gemini transcription select korle eki Gemini key transcription o translation-e use hoy.
 - On-device Whisper prothombar ekti ~78 MB model download kore; erpor transcription offline cholbe.
-- Gemini translation-e neighboring subtitle dialogue context hisebe use hoy, Bangla-ke aro natural o bujhte shohoj rakhar jonno.
+- Gemini translation-e neighboring subtitle dialogue context hisebe use hoy, Bangla-ke aro natural o bujhte shohoj rakhar jonno. Gemini file uploads Gemini API-te temporary thake and Google-er file-retention policy onujayi expire hoy.

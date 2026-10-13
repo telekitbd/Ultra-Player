@@ -33,15 +33,13 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
     var translationGeminiKey by mutableStateOf(sp.getString("translation_gemini_key", "") ?: "")
     var endpoint by mutableStateOf(sp.getString("endpoint", WhisperClient.GROQ_URL) ?: WhisperClient.GROQ_URL)
     var model by mutableStateOf(
-        sp.getString("model", null).orEmpty()
-            .takeUnless { it.isBlank() || it == "whisper-1" || it == "gemini-2.5-flash" }
-            ?: if (provider == "gemini") GeminiSpeechClient.MODEL
-            else if (provider == "groq") WhisperClient.GROQ_MODEL else ""
+        if (provider == "gemini") GeminiSpeechClient.MODEL
+        else sp.getString("model", null).orEmpty()
+            .takeUnless { it.isBlank() || it == "whisper-1" || it == "gemini-2.5-flash" || it == "gemini-3.8-live" }
+            ?: if (provider == "groq") WhisperClient.GROQ_MODEL else ""
     )
     var spokenLang by mutableStateOf(sp.getString("spoken", "auto") ?: "auto")
     var targetLang by mutableStateOf(sp.getString("target", "bn") ?: "bn")
-    var translateEnabled by mutableStateOf(true)
-
     var busy by mutableStateOf(false)
     var status by mutableStateOf("")
     var progress by mutableFloatStateOf(0f)
@@ -108,9 +106,9 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                     (if (provider == "gemini") geminiKey else groqKey).isBlank()) {
                     throw IllegalStateException("Selected provider API key dao")
                 }
-                if (translateEnabled && translationKey().isBlank()) {
+                if (translationKey().isBlank()) {
                     throw IllegalStateException(
-                        "Natural, context-aware Bengali translation needs a Gemini API key. Add one in Translation settings.",
+                        "Subtitle translation is required. Add a Gemini API key before generating subtitles.",
                     )
                 }
 
@@ -131,9 +129,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                             status = "Speech → text ($provider, part ${idx + 1})..."
                         }
                         val part = when (provider) {
-                            "gemini" -> GeminiSpeechClient.transcribe(
-                                geminiKey, model.ifBlank { GeminiSpeechClient.MODEL }, spokenLang, file, 0L
-                            )
+                            "gemini" -> GeminiSpeechClient.transcribe(geminiKey, model, spokenLang, file, 0L)
                             "device" -> LocalWhisper.transcribe(
                                 file, localModel ?: error("Whisper model missing"), spokenLang, 0L
                             )
@@ -149,7 +145,7 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
                 cues = all
                 if (all.isEmpty()) throw IllegalStateException("Kono speech paoya jay nai")
 
-                if (translateEnabled) doTranslate(all)
+                doTranslate(all)
                 progress = 1f
                 status = "Done: ${cues.size} lines"
             } catch (e: CancellationException) {
@@ -169,6 +165,9 @@ class StudioViewModel(app: Application) : AndroidViewModel(app) {
         job = viewModelScope.launch {
             busy = true; errorMsg = null
             try {
+                if (translationKey().isBlank()) {
+                    throw IllegalStateException("A Gemini API key is required to translate subtitles.")
+                }
                 doTranslate(original.ifEmpty { cues })
                 status = "Translated: ${cues.size} lines"
             } catch (e: CancellationException) {

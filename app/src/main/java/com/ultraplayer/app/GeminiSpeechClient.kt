@@ -1,35 +1,27 @@
 package com.ultraplayer.app
 
-import android.util.Base64
 import java.io.File
 import java.io.IOException
-import java.util.Collections
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicLong
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
+import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 
 object GeminiSpeechClient {
-    const val MODEL = "gemini-3.8-live"
-    private const val SAMPLE_RATE = 16_000
-    private const val AUDIO_MIME_TYPE = "audio/pcm;rate=16000"
-    private const val AUDIO_BYTES_PER_SECOND = SAMPLE_RATE * 2
-    private const val CHUNK_BYTES = 3_200
+    const val MODEL = "gemini-3.8-flash"
+    private const val API_ROOT = "https://generativelanguage.googleapis.com"
+    private const val AUDIO_MIME_TYPE = "audio/wav"
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS)
-        .pingInterval(20, TimeUnit.SECONDS)
+        .writeTimeout(120, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
         .build()
 
     suspend fun transcribe(
@@ -39,129 +31,130 @@ object GeminiSpeechClient {
         file: File,
         offsetMs: Long,
     ): List<Cue> = withContext(Dispatchers.IO) {
-        val wav = file.readBytes()
-        if (wav.size <= 44 || String(wav, 0, 4, Charsets.US_ASCII) != "RIFF") {
-            throw IOException("Gemini Live needs a valid PCM WAV audio chunk")
+        if (!file.isFile || file.length() <= 44L) {
+            throw IOException("Gemini transcription needs a non-empty WAV audio chunk")
         }
-        val pcm = wav.copyOfRange(44, wav.size)
-        val modelName = model.trim().ifBlank { MODEL }
-        val setup = JSONObject()
-            .put("setup", JSONObject()
-                .put("model", "models/$modelName")
-                .put("generationConfig", JSONObject()
-                    .put("responseModalities", JSONArray().put("AUDIO")))
-                .put("inputAudioTranscription", JSONObject())
-                .put("systemInstruction", JSONObject().put("parts", JSONArray().put(
-                    JSONObject().put(
-                        "text",
-                        "Transcribe the incoming audio exactly in its original spoken language. " +
-                            (if (language == "auto") "Detect its language automatically. " else "The spoken language is $language. ") +
-                            "Do not summarize, translate, or add commentary.",
-                    ),
-                ))))
-            .toString()
+        val apiKey = key.trim()
+        if (apiKey.isEmpty()) throw IOException("Gemini API key is missing")
 
-        val setupComplete = CompletableDeferred<Unit>()
-        val turnComplete = CompletableDeferred<Unit>()
-        val samplesSent = AtomicLong(0)
-        val transcripts = Collections.synchronizedList(mutableListOf<Pair<String, Long>>())
-        val liveApiUrl =
-            "https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta/" +
-                "GenerativeService.BidiGenerateContent"
+        val audioFile = upload(apiKey, file)
+        val durationMs = (file.length() - 44L) * 1000L / 32L
+        val languageHint = if (language == "auto") {
+            "Detect the spoken language automatically."
+        } else {
+            "The expected spoken language is $language."
+        }
+        val prompt = "Transcribe the speech in this audio in its original language. $languageHint " +
+            "Return every spoken segment in order with start_time and end_time as seconds from the " +
+            "beginning of this audio chunk, and text containing only the words spoken in that segment. " +
+            "Use concise subtitle-sized segments, preserve meaning and punctuation, and do not translate, " +
+            "summarize, or add commentary. Return an empty segments array if there is no intelligible speech."
+        val schema = JSONObject()
+            .put("type", "object")
+            .put("properties", JSONObject().put("segments", JSONObject()
+                .put("type", "array")
+                .put("items", JSONObject()
+                    .put("type", "object")
+                    .put("properties", JSONObject()
+                        .put("start_time", JSONObject().put("type", "number"))
+                        .put("end_time", JSONObject().put("type", "number"))
+                        .put("text", JSONObject().put("type", "string")))
+                    .put("required", JSONArray().put("start_time").put("end_time").put("text"))
+                    .put("additionalProperties", false)))
+            .put("required", JSONArray().put("segments"))
+            .put("additionalProperties", false)
+        val body = JSONObject()
+            .put("model", model.trim().ifBlank { MODEL })
+            .put("input", JSONArray()
+                .put(JSONObject().put("type", "text").put("text", prompt))
+                .put(JSONObject()
+                    .put("type", "audio")
+                    .put("uri", audioFile.optString("uri"))
+                    .put("mime_type", audioFile.optString("mime_type", AUDIO_MIME_TYPE))))
+            .put("response_format", schema)
+            .toString()
+            .toRequestBody("application/json; charset=utf-8".toMediaType())
         val request = Request.Builder()
-            .url(liveApiUrl.toHttpUrl().newBuilder().addQueryParameter("key", key.trim()).build())
+            .url("$API_ROOT/v1beta/interactions")
+            .header("x-goog-api-key", apiKey)
+            .post(body)
             .build()
 
-        val socket = http.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
-                if (!webSocket.send(setup)) {
-                    val error = IOException("Could not start Gemini Live transcription session")
-                    setupComplete.completeExceptionally(error)
-                    turnComplete.completeExceptionally(error)
-                }
+        val raw = http.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("Gemini transcription error ${response.code}: ${responseBody.take(400)}")
             }
-
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                try {
-                    val message = JSONObject(text)
-                    message.optJSONObject("error")?.let {
-                        val error = IOException("Gemini Live error: ${it.optString("message", it.toString())}")
-                        setupComplete.completeExceptionally(error)
-                        turnComplete.completeExceptionally(error)
-                        return
-                    }
-                    if (message.has("setupComplete")) setupComplete.complete(Unit)
-                    val content = message.optJSONObject("serverContent")
-                    val finalText = content?.optJSONObject("inputTranscription")
-                        ?.optString("text").orEmpty().trim()
-                    if (finalText.isNotEmpty()) {
-                        transcripts.add(finalText to samplesSent.get())
-                    }
-                    if (content?.optBoolean("turnComplete") == true) turnComplete.complete(Unit)
-                } catch (error: Exception) {
-                    setupComplete.completeExceptionally(error)
-                    turnComplete.completeExceptionally(error)
-                }
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
-                val error = IOException(
-                    "Gemini Live connection failed${response?.let { " (${it.code})" } ?: ""}: ${t.message}",
-                    t,
-                )
-                setupComplete.completeExceptionally(error)
-                turnComplete.completeExceptionally(error)
-            }
-
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                if (!turnComplete.isCompleted) {
-                    val error = IOException("Gemini Live closed before transcription finished: $reason")
-                    setupComplete.completeExceptionally(error)
-                    turnComplete.completeExceptionally(error)
-                }
-            }
-        })
-
-        try {
-            withTimeout(30_000) { setupComplete.await() }
-            var position = 0
-            while (position < pcm.size) {
-                val end = minOf(position + CHUNK_BYTES, pcm.size)
-                val packet = pcm.copyOfRange(position, end)
-                val message = JSONObject()
-                    .put("realtimeInput", JSONObject().put("audio", JSONObject()
-                        .put("mimeType", AUDIO_MIME_TYPE)
-                        .put("data", Base64.encodeToString(packet, Base64.NO_WRAP))))
-                    .toString()
-                if (!socket.send(message)) throw IOException("Gemini Live audio stream was rejected")
-                val samples = packet.size / 2
-                samplesSent.addAndGet(samples.toLong())
-                position = end
-                delay((samples * 1000L / SAMPLE_RATE).coerceAtLeast(1L))
-            }
-            if (!socket.send(JSONObject().put("realtimeInput", JSONObject().put("audioStreamEnd", true)).toString())) {
-                throw IOException("Could not finish Gemini Live audio stream")
-            }
-            withTimeout(60_000) { turnComplete.await() }
-        } finally {
-            socket.close(1000, "transcription complete")
+            responseBody
         }
-
-        val durationMs = pcm.size * 1000L / AUDIO_BYTES_PER_SECOND
-        var lastEndMs = 0L
-        val result = buildList {
-            transcripts.toList().forEach { (text, sentSamples) ->
-                val estimatedDurationMs = (text.split(Regex("\\s+")).size * 420L).coerceIn(600L, 8_000L)
-                val reportedEndMs = sentSamples * 1000L / SAMPLE_RATE
-                val endMs = maxOf(reportedEndMs, lastEndMs + estimatedDurationMs).coerceAtMost(durationMs)
-                val startMs = maxOf(lastEndMs, endMs - estimatedDurationMs)
-                if (text.isNotBlank() && endMs > startMs) {
+        val interaction = JSONObject(raw)
+        val outputText = interaction.optString("output_text").ifBlank {
+            val output = interaction.optJSONArray("outputs") ?: interaction.optJSONArray("output")
+            (0 until (output?.length() ?: 0)).mapNotNull { index ->
+                output?.optJSONObject(index)?.optString("text")?.takeIf { it.isNotBlank() }
+            }.joinToString("\n")
+        }
+        if (outputText.isBlank()) {
+            throw IOException("Gemini returned no transcription output")
+        }
+        val segments = try {
+            JSONObject(outputText).getJSONArray("segments")
+        } catch (error: Exception) {
+            throw IOException("Gemini returned malformed timestamped transcription", error)
+        }
+        buildList {
+            for (index in 0 until segments.length()) {
+                val segment = segments.optJSONObject(index)
+                    ?: throw IOException("Gemini returned an invalid transcription segment")
+                val text = segment.optString("text").trim()
+                val startMs = (segment.optDouble("start_time", -1.0) * 1000).toLong()
+                    .coerceIn(0L, durationMs)
+                val endMs = (segment.optDouble("end_time", -1.0) * 1000).toLong()
+                    .coerceIn(startMs, durationMs)
+                if (text.isNotEmpty() && endMs > startMs) {
                     add(Cue(offsetMs + startMs, offsetMs + endMs, text))
-                    lastEndMs = endMs
                 }
             }
+        }.sortedBy { it.start }
+    }
+
+    private fun upload(key: String, file: File): JSONObject {
+        val startRequest = Request.Builder()
+            .url("$API_ROOT/upload/v1beta/files")
+            .header("x-goog-api-key", key)
+            .header("X-Goog-Upload-Protocol", "resumable")
+            .header("X-Goog-Upload-Command", "start")
+            .header("X-Goog-Upload-Header-Content-Length", file.length().toString())
+            .header("X-Goog-Upload-Header-Content-Type", AUDIO_MIME_TYPE)
+            .post(JSONObject().put("file", JSONObject().put("display_name", file.name))
+                .toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .build()
+        val uploadUrl = http.newCall(startRequest).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("Gemini audio upload error ${response.code}: ${responseBody.take(400)}")
+            }
+            response.header("X-Goog-Upload-URL")
+                ?: throw IOException("Gemini audio upload did not return an upload URL")
         }
-        if (result.isEmpty()) throw IOException("Gemini Live returned no finalized speech transcription")
-        result
+        val uploadRequest = Request.Builder()
+            .url(uploadUrl)
+            .header("x-goog-api-key", key)
+            .header("X-Goog-Upload-Offset", "0")
+            .header("X-Goog-Upload-Command", "upload, finalize")
+            .post(file.asRequestBody(AUDIO_MIME_TYPE.toMediaType()))
+            .build()
+        return http.newCall(uploadRequest).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("Gemini audio upload error ${response.code}: ${responseBody.take(400)}")
+            }
+            val uploaded = JSONObject(responseBody).optJSONObject("file")
+                ?: throw IOException("Gemini audio upload returned no file metadata")
+            if (uploaded.optString("uri").isBlank()) {
+                throw IOException("Gemini audio upload returned no file URI")
+            }
+            uploaded
+        }
     }
 }
