@@ -13,7 +13,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -67,14 +70,19 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.consume
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
@@ -278,7 +286,7 @@ fun PlayerScreen(
             showControls = false
         }
     }
-    LaunchedEffect(hudStamp) { delay(900); hud = null }
+    LaunchedEffect(hudStamp) { delay(if (hudLabel != null) 2500 else 900); hud = null }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(factory = { videoLayout }, modifier = Modifier.fillMaxSize())
 
@@ -340,29 +348,46 @@ fun PlayerScreen(
         hud?.let {
             if (hudLabel != null && hudIcon != null) {
                 Column(
-                    Modifier.align(Alignment.Center).width(208.dp).clip(RoundedCornerShape(18.dp))
-                        .background(Color(0xE61B1B1F)).padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    Modifier
+                        .align(if (hudLabel == "Brightness") Alignment.CenterStart else Alignment.CenterEnd)
+                        .padding(horizontal = 20.dp)
+                        .width(92.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color(0xE61B1B1F))
+                        .padding(horizontal = 12.dp, vertical = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Icon(hudIcon!!, null, tint = Color.White, modifier = Modifier.size(32.dp))
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                hudLabel!!, color = Color.White.copy(alpha = 0.72f), fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Text(it, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                    Box(
-                        Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
-                            .background(Color.White.copy(alpha = 0.22f))
-                    ) {
-                        Box(
-                            Modifier.fillMaxWidth(hudProgress).fillMaxSize()
-                                .clip(RoundedCornerShape(3.dp)).background(Color.White)
-                        )
-                    }
+                    Icon(hudIcon!!, null, tint = Color.White, modifier = Modifier.size(24.dp))
+                    Text(
+                        hudLabel!!, color = Color.White.copy(alpha = 0.72f), fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    VerticalLevelControl(
+                        value = hudProgress,
+                        onValueChange = { value ->
+                            if (hudLabel == "Brightness") {
+                                val lp = activity.window.attributes
+                                lp.screenBrightness = value.coerceIn(0.01f, 1f)
+                                activity.window.attributes = lp
+                                showLevelHud("Brightness", Icons.Rounded.Brightness6, lp.screenBrightness)
+                            } else {
+                                val max = audioMgr.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                                if (max > 0) {
+                                    audioMgr.setStreamVolume(
+                                        AudioManager.STREAM_MUSIC,
+                                        (value * max).roundToInt(),
+                                        0,
+                                    )
+                                    showVolumeHud(
+                                        audioMgr.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat(),
+                                        max,
+                                    )
+                                }
+                            }
+                        },
+                    )
+                    Text(it, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 }
             } else {
                 Box(
@@ -375,6 +400,7 @@ fun PlayerScreen(
                     )
                 }
             }
+
         }
 
         if (failed) {
@@ -559,5 +585,44 @@ private fun DelayRow(label: String, ms: Long, onChange: (Long) -> Unit) {
         Text("$label: ${if (ms >= 0) "+" else ""}${ms}ms", modifier = Modifier.weight(1f))
         OutlinedButton(onClick = { onChange(ms - 100) }) { Text("-0.1s") }
         OutlinedButton(onClick = { onChange(ms + 100) }, modifier = Modifier.padding(start = 6.dp)) { Text("+0.1s") }
+    }
+}
+
+@Composable
+private fun VerticalLevelControl(value: Float, onValueChange: (Float) -> Unit) {
+    val currentValue by rememberUpdatedState(onValueChange)
+    Canvas(
+        Modifier.width(44.dp).height(160.dp).pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                currentValue((1f - down.position.y / size.height).coerceIn(0f, 1f))
+                var pointer = down
+                do {
+                    val event = awaitPointerEvent()
+                    pointer = event.changes.firstOrNull { it.id == down.id } ?: break
+                    if (pointer.pressed) {
+                        currentValue((1f - pointer.position.y / size.height).coerceIn(0f, 1f))
+                        pointer.consume()
+                    }
+                } while (pointer.pressed)
+            }
+        },
+    ) {
+        val centerX = size.width / 2
+        val trackWidth = 5.dp.toPx()
+        val thumbY = size.height * (1f - value.coerceIn(0f, 1f))
+        drawRoundRect(
+            color = Color.White.copy(alpha = 0.28f),
+            topLeft = Offset(centerX - trackWidth / 2, 0f),
+            size = Size(trackWidth, size.height),
+            cornerRadius = CornerRadius(trackWidth / 2),
+        )
+        drawRoundRect(
+            color = Color.White,
+            topLeft = Offset(centerX - trackWidth / 2, thumbY),
+            size = Size(trackWidth, size.height - thumbY),
+            cornerRadius = CornerRadius(trackWidth / 2),
+        )
+        drawCircle(Color.White, radius = 8.dp.toPx(), center = Offset(centerX, thumbY))
     }
 }
